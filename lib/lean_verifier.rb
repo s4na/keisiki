@@ -59,16 +59,25 @@ class LeanVerifier
     output, status = lean(directory, "-o", "Audit.olean", "Audit.lean")
     return Result.new("UNKNOWN", {}, output) unless status.success?
 
-    report, status = lean(directory, "--run", File.join(ROOT, "script/audit.lean"))
-    return Result.new("UNKNOWN", {}, report) unless status.success?
-
-    data = { model_status: counterexample ? "REFUTED" : "PROVEN", axioms: JSON.parse(report) }
+    witness = nil
     if counterexample
       witnesses = output.lines.grep(/\Akeisiki-witness=/)
       return Result.new("UNKNOWN", {}, "Expected one witness report:\n#{output}") unless witnesses.size == 1
 
-      data[:witness] = JSON.parse(witnesses.first.delete_prefix("keisiki-witness="))
+      candidate = JSON.parse(witnesses.first.delete_prefix("keisiki-witness="))
+      unless candidate.is_a?(Hash) && candidate["arguments"].is_a?(Array) &&
+          candidate["arguments"].all?(Integer) && candidate["result"].is_a?(Integer)
+        return Result.new("UNKNOWN", {}, "Expected integer arguments and result in the witness")
+      end
+
+      witness = candidate.slice("arguments", "result")
     end
+    arguments = witness ? [JSON.generate(witness)] : []
+    report, status = lean(directory, "--run", File.join(ROOT, "script/audit.lean"), *arguments)
+    return Result.new("UNKNOWN", {}, report) unless status.success?
+
+    data = { model_status: counterexample ? "REFUTED" : "PROVEN", axioms: JSON.parse(report) }
+    data[:witness] = witness if witness
     Result.new(counterexample ? "COUNTEREXAMPLE" : "PROVEN_CONDITIONAL", data, "")
   rescue JSON::ParserError => error
     Result.new("UNKNOWN", {}, "Invalid audit data: #{error.message}")

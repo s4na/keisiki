@@ -20,7 +20,24 @@ def recheckModule (name : Name) : IO Unit := do
     declarations := declarations.insert constant info
   discard <| env.toKernelEnv.replay declarations
 
-def main : IO UInt32 := do
+def checkWitness (env : Environment) (serialized : String) : IO Unit := do
+  let witness ← IO.ofExcept (Json.parse serialized)
+  let arguments ← IO.ofExcept (witness.getObjValAs? (List Int) "arguments")
+  let result ← IO.ofExcept (witness.getObjValAs? Int "result")
+  let witnessType := mkConst `Keisiki.Witness
+  let literal := mkApp2 (mkConst `Keisiki.Witness.mk) (toExpr arguments) (toExpr result)
+  let equality := mkApp3 (mkConst `Eq [.one]) witnessType (mkConst `Verification.witness) literal
+  let proof := mkApp2 (mkConst `Eq.refl [.one]) witnessType literal
+  let declaration := Declaration.thmDecl {
+    name := `Keisiki.checkedSerializedWitness
+    levelParams := []
+    type := equality
+    value := proof
+  }
+  if let .error _ := env.toKernelEnv.addDecl {} declaration then
+    throw (IO.userError "Serialized witness differs from the kernel-checked witness")
+
+def main (arguments : List String) : IO UInt32 := do
   initSearchPath (← findSysroot)
   -- Read kernel declarations without running initializers supplied by proof files.
   let env ← importModules #[{ module := `Audit }] {} (loadExts := false)
@@ -41,5 +58,9 @@ def main : IO UInt32 := do
     throw (IO.userError s!"Proof depends on unapproved axioms: {unapproved.toList}")
   for name in [`GeneratedRuby, `VerificationClaim, `VerificationCertificate, `Audit] do
     recheckModule name
+  match arguments with
+  | [] => pure ()
+  | [serialized] => checkWitness env serialized
+  | _ => throw (IO.userError "Expected at most one serialized witness")
   IO.println (toJson (axioms.map toString)).compress
   return 0

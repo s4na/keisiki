@@ -177,4 +177,14 @@ Dir.mktmpdir("keisiki-smoke-") do |directory|
   mutant = File.join(directory, "reversed_arguments.rb")
   _, diagnostic = verify("UNKNOWN", 3, certificate: invalid_certificate, sources: [mutant, RULES])
   abort "Missing replacement-program rejection" unless diagnostic.include?("GeneratedRuby.")
+
+  genuine = File.read(File.join(ROOT, "examples/lean/ReversedArguments.lean"))
+  File.write(invalid_certificate, genuine.sub("def witness : Witness", <<~LEAN.strip))
+    def compiledWitness : Witness := ⟨[0, 0], 42⟩
+
+    @[implemented_by compiledWitness]
+    def witness : Witness
+  LEAN
+  _, diagnostic = verify("UNKNOWN", 3, certificate: invalid_certificate, sources: [mutant, RULES], refute: true)
+  abort "Missing rejection for a serialized value that differs from the proof" unless diagnostic.include?("Serialized witness differs")
 end
