@@ -39,6 +39,7 @@ def expect_verifier(verifier, example, exit_status, output_prefix)
   unless status.exitstatus == exit_status && output.lines.any? { |line| line.start_with?(output_prefix) }
     abort "Expected #{output_prefix} with exit status #{exit_status}, got #{status.exitstatus}"
   end
+  output
 end
 
 expect_verifier(verifier, example, 0, "UNSAT:")
@@ -59,6 +60,31 @@ Dir.mktmpdir("keisiki-smoke-") do |directory|
 
   File.write(source, original.sub(guarded_body, "    stock - quantity\n"))
   expect_verifier(verifier, mutated_example, 10, "COUNTEREXAMPLE:")
+
+  subtraction = "      stock - quantity\n"
+  zero_boundary = <<~RUBY.lines.map { |line| "      #{line}" }.join
+    if stock > 0
+      stock - quantity
+    else
+      -1
+    end
+  RUBY
+  File.write(source, original.sub(subtraction, zero_boundary))
+  expect_verifier(verifier, mutated_example, 10, "COUNTEREXAMPLE: GET /stock/remaining?stock=0&quantity=0 ->")
+
+  large_boundary = <<~RUBY.lines.map { |line| "      #{line}" }.join
+    if quantity > 9_223_372_036_854_775_807
+      stock - quantity - 1
+    else
+      stock - quantity
+    end
+  RUBY
+  File.write(source, original.sub(subtraction, large_boundary))
+  counterexample = expect_verifier(verifier, mutated_example, 10, "COUNTEREXAMPLE:")
+  match = /\?stock=(\d+)&quantity=\1 ->/.match(counterexample)
+  unless match && match[1].to_i >= 2**63
+    abort "Expected a counterexample at equality beyond the signed 64-bit range"
+  end
 
   File.write(source, original.sub(guarded_body, "    stock.to_i\n"))
   expect_verifier(verifier, mutated_example, 2, "UNSUPPORTED:")
