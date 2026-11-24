@@ -4,22 +4,23 @@ require_relative "../examples/postgres/reservation"
 
 class PostgresRuntime
   SCHEMA_SQL = File.expand_path("../examples/postgres/schema.sql", __dir__)
+  TRANSACTION_END = { commit: "COMMIT", rollback: "ROLLBACK" }.freeze
 
-  def self.with_database(url)
-    database = new(url)
+  def self.with_database(url, schema_sql: File.binread(SCHEMA_SQL))
+    database = new(url, schema_sql)
     yield database
   ensure
     database&.close
   end
 
-  def initialize(url)
+  def initialize(url, schema_sql)
     @url = url
     @monitor = PG.connect(url)
     name = @monitor.quote_ident("keisiki_test_#{SecureRandom.hex(8)}")
     @monitor.exec("CREATE SCHEMA #{name}")
     @schema = name
     configure(@monitor)
-    @monitor.exec(File.binread(SCHEMA_SQL))
+    @monitor.exec(schema_sql)
     @version = @monitor.server_version
     raise "This replay requires PostgreSQL 18" unless @version / 10_000 == 18
   rescue
@@ -29,13 +30,13 @@ class PostgresRuntime
 
   attr_reader :version
 
-  def single(sql, initial, amount)
+  def single(sql, initial, amount, reservation: Reservation)
     reset(initial)
-    returned = Reservation.new(@monitor, sql: sql).reserve(amount)
+    returned = reservation.new(@monitor, sql: sql).reserve(amount)
     finish(initial, [[amount, :commit, returned]])
   end
 
-  def overlapping(sql, first_finish:)
+  def overlapping(sql, first_finish:, transaction_end: TRANSACTION_END)
     reset(1)
     first = connect
     second = connect
@@ -51,10 +52,11 @@ class PostgresRuntime
       result
     end
     wait_until_blocked(first_pid, second_pid, worker)
-    first.exec({ commit: "COMMIT", rollback: "ROLLBACK" }.fetch(first_finish))
+    first_command = first.exec(transaction_end.fetch(first_finish)) { |result| result.cmd_status }
     raise "Second transaction did not finish" unless worker.join(10)
 
-    finish(1, [[1, first_finish, first_return], [1, :commit, worker.value]]).merge(blocked: true)
+    # The caller accounts for its intended outcome. Keep PostgreSQL's actual command tag alongside it.
+    finish(1, [[1, first_finish, first_return], [1, :commit, worker.value]]).merge(blocked: true, first_command: first_command)
   ensure
     first&.close
     begin
@@ -62,6 +64,17 @@ class PostgresRuntime
     ensure
       second&.close
     end
+  end
+
+  def duplicate_stock_key
+    reset(1)
+    begin
+      @monitor.exec("INSERT INTO keisiki_stock VALUES (1, 2)")
+    rescue PG::UniqueViolation => error
+      sqlstate = error.result.error_field(PG::PG_DIAG_SQLSTATE)
+    end
+    quantities = @monitor.exec("SELECT quantity FROM keisiki_stock WHERE id = 1 ORDER BY quantity")
+    { sqlstate: sqlstate, quantities: quantities.values.flatten.map { |value| Integer(value, 10) } }
   end
 
   def close
