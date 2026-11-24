@@ -1,0 +1,9 @@
+name = "keisiki"
+version = "0.1.0"
+defaultTargets = ["Keisiki"]
+
+[leanOptions]
+warningAsError = true
+
+[[lean_lib]]
+name = "Keisiki"
