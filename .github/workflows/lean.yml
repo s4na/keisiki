@@ -1,0 +1,36 @@
+name: Ruby semantics in Lean
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: true
+          test: false
+      - name: Check contracts, rejected proofs, and CRuby replay
+        env:
+          KEISIKI_ARTIFACT_DIR: ${{ runner.temp }}/keisiki-proof
+        run: bundle exec ruby test/smoke.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ruby-lean-verification
+          path: ${{ runner.temp }}/keisiki-proof
+          if-no-files-found: error
