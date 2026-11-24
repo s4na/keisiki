@@ -1,0 +1,5 @@
+test:
+  url: <%= ENV.fetch("KEISIKI_POSTGRES_TEST_URL").to_json %>
+  schema_search_path: <%= ENV.fetch("KEISIKI_POSTGRES_TEST_SCHEMA") %>
+  variables:
+    statement_timeout: 5000
