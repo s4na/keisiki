@@ -5,7 +5,6 @@ require_relative "ruby_to_lean"
 
 class LeanVerifier
   ROOT = File.expand_path("..", __dir__)
-  ALLOWED_AXIOMS = %w[propext Classical.choice Quot.sound].freeze
   SOURCE_PREMISES = [
     "The pinned Prism parser and AST emitter agree with CRuby 4.0 on the supported source.",
     "The supplied modules are loaded as written into a fresh environment; no methods or core Integer operations are redefined.",
@@ -49,7 +48,7 @@ class LeanVerifier
 
   def check_modules(directory, counterexample)
     %w[GeneratedRuby VerificationClaim VerificationCertificate].each do |module_name|
-      output, status = lean(directory, module_name, "-o", "#{module_name}.olean")
+      output, status = lean(directory, "-o", "#{module_name}.olean", "#{module_name}.lean")
       next if status.success?
 
       result = module_name == "VerificationCertificate" ? "UNKNOWN" : "ERROR"
@@ -57,29 +56,28 @@ class LeanVerifier
     end
 
     File.write(File.join(directory, "Audit.lean"), audit_source(counterexample))
-    output, status = lean(directory, "Audit")
+    output, status = lean(directory, "-o", "Audit.olean", "Audit.lean")
     return Result.new("UNKNOWN", {}, output) unless status.success?
 
-    axioms = audited_axioms(output)
-    unless axioms && (axioms - ALLOWED_AXIOMS).empty?
-      return Result.new("UNKNOWN", {}, "Proof depends on unapproved axioms or the audit is incomplete:\n#{output}")
-    end
+    report, status = lean(directory, "--run", File.join(ROOT, "script/audit.lean"))
+    return Result.new("UNKNOWN", {}, report) unless status.success?
 
-    data = { model_status: counterexample ? "REFUTED" : "PROVEN", axioms: axioms }
+    data = { model_status: counterexample ? "REFUTED" : "PROVEN", axioms: JSON.parse(report) }
     if counterexample
-      line = output.lines.find { |entry| entry.start_with?("keisiki-witness=") }
-      return Result.new("ERROR", {}, output) unless line
+      witnesses = output.lines.grep(/\Akeisiki-witness=/)
+      return Result.new("UNKNOWN", {}, "Expected one witness report:\n#{output}") unless witnesses.size == 1
 
-      data[:witness] = JSON.parse(line.delete_prefix("keisiki-witness="))
+      data[:witness] = JSON.parse(witnesses.first.delete_prefix("keisiki-witness="))
     end
     Result.new(counterexample ? "COUNTEREXAMPLE" : "PROVEN_CONDITIONAL", data, "")
+  rescue JSON::ParserError => error
+    Result.new("UNKNOWN", {}, "Invalid audit data: #{error.message}")
   end
 
-  def lean(directory, module_name, *options)
+  def lean(directory, *arguments)
     search_path = [directory, File.join(ROOT, ".lake/build/lib/lean")].join(File::PATH_SEPARATOR)
     Open3.capture2e(
-      { "LEAN_PATH" => search_path }, "lean", "-DwarningAsError=true",
-      *options, "#{module_name}.lean", chdir: directory
+      { "LEAN_PATH" => search_path }, "lean", "-DwarningAsError=true", *arguments, chdir: directory
     )
   end
 
@@ -95,8 +93,6 @@ class LeanVerifier
       import VerificationCertificate
 
       theorem checkedCertificate : #{proposition} := Verification.certificate
-      #print axioms checkedCertificate
-      #print axioms Keisiki.invoke_lower
     LEAN
     return source unless counterexample
 
@@ -105,19 +101,5 @@ class LeanVerifier
         "keisiki-witness={\"arguments\":[" ++ String.intercalate "," (Verification.witness.arguments.map toString) ++
         "],\"result\":" ++ toString Verification.witness.result ++ "}")
     LEAN
-  end
-
-  def audited_axioms(output)
-    axiom_lists = %w[checkedCertificate Keisiki.invoke_lower].map do |name|
-      line = output.lines.find { |entry| entry.start_with?("'#{name}'") }&.strip
-      return unless line
-      next [] if line == "'#{name}' does not depend on any axioms"
-
-      match = /depends on axioms: \[([^\]]*)\]\z/.match(line)
-      return unless match
-
-      match[1].split(",").map(&:strip)
-    end
-    axiom_lists.flatten.uniq.sort
   end
 end

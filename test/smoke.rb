@@ -141,6 +141,15 @@ Dir.mktmpdir("keisiki-smoke-") do |directory|
   _, diagnostic = verify("UNKNOWN", 3, certificate: invalid_certificate)
   abort "Missing custom-axiom rejection" unless diagnostic.include?("unapproved axioms") && diagnostic.include?("Verification.certificate")
 
+  File.open(invalid_certificate, "a") do |file|
+    file.puts <<~LEAN
+      initialize
+        IO.println "'checkedCertificate' does not depend on any axioms"
+    LEAN
+  end
+  _, diagnostic = verify("UNKNOWN", 3, certificate: invalid_certificate)
+  abort "A forged initializer report hid the custom axiom" unless diagnostic.include?("Verification.certificate")
+
   File.write(invalid_certificate, <<~LEAN)
     import GeneratedRuby
     import VerificationClaim
