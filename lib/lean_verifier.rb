@@ -18,10 +18,12 @@ class LeanVerifier
     generated = RubyToLean.generate(sources)
     claim_bytes = File.binread(claim)
     certificate_bytes = File.binread(certificate)
+    toolchain = File.read(File.join(ROOT, "lean-toolchain"))
     output, status = Open3.capture2e("lake", "build", chdir: ROOT)
     return Result.new("ERROR", {}, output) unless status.success?
 
     Dir.mktmpdir("keisiki-lean-") do |directory|
+      File.write(File.join(directory, "lean-toolchain"), toolchain)
       File.write(File.join(directory, "GeneratedRuby.lean"), generated)
       File.binwrite(File.join(directory, "VerificationClaim.lean"), claim_bytes)
       File.binwrite(File.join(directory, "VerificationCertificate.lean"), certificate_bytes)
@@ -33,6 +35,7 @@ class LeanVerifier
         certificate_sha256: Digest::SHA256.hexdigest(certificate_bytes),
         ruby_version: "#{RUBY_ENGINE} #{RUBY_VERSION}",
         prism_version: Prism::VERSION,
+        lean_toolchain: toolchain.strip,
         source_premises: SOURCE_PREMISES
       }.merge(result.data))
     end

@@ -62,6 +62,7 @@ def publish(name, content)
 end
 
 Dir.mktmpdir("keisiki-smoke-") do |directory|
+  FileUtils.cp(File.join(ROOT, "lean-toolchain"), directory)
   original = RubyToLean.generate([BUDGET, RULES])
   copy = File.join(directory, "relocated.rb")
   FileUtils.cp(BUDGET, copy)
