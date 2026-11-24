@@ -39,9 +39,11 @@ def checkWitness (env : Environment) (serialized : String) : IO Unit := do
 
 def main (arguments : List String) : IO UInt32 := do
   initSearchPath (← findSysroot)
+  let postgres := arguments == ["--postgres"]
   -- Read kernel declarations without running initializers supplied by proof files.
   let env ← importModules #[{ module := `Audit }] {} (loadExts := false)
-  let roots := #[`checkedCertificate, `Keisiki.invoke_lower]
+  let roots := if postgres then #[`checkedCertificate, `Keisiki.Postgres.no_oversell]
+    else #[`checkedCertificate, `Keisiki.invoke_lower]
   for root in roots do
     unless (env.checked.get.find? root).isSome do
       throw (IO.userError s!"Missing checked theorem {root}")
@@ -56,10 +58,12 @@ def main (arguments : List String) : IO UInt32 := do
   let unapproved := axioms.filter fun axiomName => !allowed.contains axiomName
   unless unapproved.isEmpty do
     throw (IO.userError s!"Proof depends on unapproved axioms: {unapproved.toList}")
-  for name in [`GeneratedRuby, `VerificationClaim, `VerificationCertificate, `Audit] do
+  let modules := if postgres then [`GeneratedSQL, `Audit]
+    else [`GeneratedRuby, `VerificationClaim, `VerificationCertificate, `Audit]
+  for name in modules do
     recheckModule name
   match arguments with
-  | [] => pure ()
+  | [] | ["--postgres"] => pure ()
   | [serialized] => checkWitness env serialized
   | _ => throw (IO.userError "Expected at most one serialized witness")
   IO.println (toJson (axioms.map toString)).compress

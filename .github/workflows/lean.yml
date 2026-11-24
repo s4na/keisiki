@@ -34,3 +34,42 @@ jobs:
           name: ruby-lean-verification
           path: ${{ runner.temp }}/keisiki-proof
           if-no-files-found: error
+
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+        env:
+          POSTGRES_PASSWORD: keisiki-ci
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: true
+          test: false
+      - name: Check SQL proofs and replay PostgreSQL transactions
+        env:
+          KEISIKI_POSTGRES_TEST_URL: postgresql://postgres:keisiki-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+          KEISIKI_POSTGRES_ARTIFACT_DIR: ${{ runner.temp }}/keisiki-postgres
+        run: bundle exec ruby test/postgres_smoke.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: postgres-sql-verification
+          path: ${{ runner.temp }}/keisiki-postgres
+          if-no-files-found: error
