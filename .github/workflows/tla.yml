@@ -1,0 +1,43 @@
+name: TLA+ unit tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tlc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0"
+          bundler-cache: true
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install pinned TLC build
+        run: |
+          tla_jar="$RUNNER_TEMP/tla2tools.jar"
+          curl --fail --location --silent --show-error --retry 3 --max-time 60 \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar \
+            --output "$tla_jar"
+          printf '%s  %s\n' fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713 "$tla_jar" | sha256sum --check
+          printf 'TLA2TOOLS_JAR=%s\n' "$tla_jar" >> "$GITHUB_ENV"
+      - name: Check model and replay failing unit tests
+        env:
+          TLA_ARTIFACT_DIR: ${{ runner.temp }}/tla-artifacts
+        run: bundle exec ruby test/tla_smoke.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tla-generated
+          path: ${{ runner.temp }}/tla-artifacts
+          if-no-files-found: error

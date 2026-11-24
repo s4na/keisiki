@@ -1,0 +1,18 @@
+---- MODULE StockCheck ----
+EXTENDS Integers
+
+VARIABLES inputStock, inputQuantity, expected, actual
+
+Expected(s, q) == IF q > s THEN s ELSE s - q
+Actual(stock, quantity) == <%= expression %>
+
+Init ==
+  \E s \in 0..4, q \in 0..4:
+    /\ inputStock = s
+    /\ inputQuantity = q
+    /\ expected = Expected(s, q)
+    /\ actual = Actual(s, q)
+
+Next == UNCHANGED <<inputStock, inputQuantity, expected, actual>>
+Conforms == actual = expected
+====
