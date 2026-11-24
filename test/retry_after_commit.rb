@@ -31,6 +31,7 @@ class RetryRun
     ENV["KEISIKI_POSTGRES_TEST_SCHEMA"] = @schema
     require_relative "../example/config/application"
     Rails.application.initialize!
+    @pool = ActiveRecord::Base.connection_pool
 
     if @variant == "double_update"
       require_relative "fixtures/double_update"
@@ -47,8 +48,15 @@ class RetryRun
     request("retry")
     { variant: @variant, postgres_version: @observer.server_version, events: @events }
   ensure
+    close
+  end
+
+  private
+
+  def close
     @server&.stop(true)
-    ActiveRecord::Base.connection_handler.clear_all_connections! if defined?(ActiveRecord::Base)
+    @pool&.disconnect!
+  ensure
     if @observer
       begin
         @observer.exec("DROP SCHEMA #{@schema} CASCADE") if @schema
@@ -57,8 +65,6 @@ class RetryRun
       end
     end
   end
-
-  private
 
   def serve(env)
     attempt = env.fetch("HTTP_X_KEISIKI_ATTEMPT")
