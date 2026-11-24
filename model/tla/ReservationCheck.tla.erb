@@ -1,0 +1,39 @@
+---- MODULE ReservationCheck ----
+EXTENDS Integers
+
+VARIABLES stock, expectedStock, phase, readValues, conforming, event
+vars == <<stock, expectedStock, phase, readValues, conforming, event>>
+
+Requests == {"a", "b"}
+Actual(observed, available) == <%= expression %>
+Done == \A r \in Requests: phase[r] = "done"
+
+Init ==
+  /\ stock = 1
+  /\ expectedStock = 1
+  /\ phase = [r \in Requests |-> "pending"]
+  /\ readValues = [r \in Requests |-> 0]
+  /\ conforming = TRUE
+  /\ event = [request |-> "", stage |-> "init", expected |-> FALSE]
+
+Read(r) ==
+  /\ phase[r] = "pending"
+  /\ phase' = [phase EXCEPT ![r] = "read"]
+  /\ readValues' = [readValues EXCEPT ![r] = stock]
+  /\ event' = [request |-> r, stage |-> "read", expected |-> FALSE]
+  /\ UNCHANGED <<stock, expectedStock, conforming>>
+
+Commit(r) ==
+  LET after == Actual(readValues[r], stock)
+      wanted == expectedStock > 0
+  IN /\ phase[r] = "read"
+     /\ stock' = IF after >= 0 THEN after ELSE stock
+     /\ expectedStock' = IF wanted THEN expectedStock - 1 ELSE expectedStock
+     /\ conforming' = (conforming /\ ((after >= 0) = wanted))
+     /\ phase' = [phase EXCEPT ![r] = "done"]
+     /\ event' = [request |-> r, stage |-> "commit", expected |-> wanted]
+     /\ UNCHANGED readValues
+
+Next == (\E r \in Requests: Read(r) \/ Commit(r)) \/ (Done /\ UNCHANGED vars)
+Conforms == Done => conforming
+====
