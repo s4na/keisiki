@@ -36,6 +36,10 @@ jobs:
         env:
           TLA_ARTIFACT_DIR: ${{ runner.temp }}/tla-artifacts
         run: bundle exec ruby test/tla_smoke.rb
+      - name: Check interactions across checkout policies in Rails
+        env:
+          TLA_ARTIFACT_DIR: ${{ runner.temp }}/tla-artifacts
+        run: bundle exec ruby test/tla_checkout_smoke.rb
       - uses: actions/upload-artifact@v7
         with:
           name: tla-oracle
