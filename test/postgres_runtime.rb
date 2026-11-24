@@ -97,7 +97,9 @@ class PostgresRuntime
   end
 
   def finish(initial, transactions)
-    rows = @monitor.exec("SELECT id, quantity FROM keisiki_stock ORDER BY id").values.map { |row| row.map(&:to_i) }
+    rows = @monitor.exec("SELECT id, quantity FROM keisiki_stock ORDER BY id").values.map do |row|
+      row.map { |value| Integer(value, 10) }
+    end
     raise "Reservation changed a different row" unless rows.map(&:first) == [1, 2] && rows.last.last == 77
 
     reserved = transactions.sum { |amount, ending, returned| ending == :commit && returned ? amount : 0 }
