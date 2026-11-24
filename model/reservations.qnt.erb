@@ -1,0 +1,42 @@
+module reservations {
+  pure val requests = Set("a", "b")
+  <%= decision %>
+
+  var stock: int
+  var phase: str -> str
+  var observed: str -> int
+  var event: { request: str, stage: str, result: int }
+
+  action init = all {
+    stock' = 1,
+    phase' = requests.mapBy(request => "pending"),
+    observed' = requests.mapBy(request => -1),
+    event' = { request: "", stage: "init", result: 0 },
+  }
+
+  action read(request) = all {
+    phase.get(request) == "pending",
+    stock' = stock,
+    phase' = phase.set(request, "read"),
+    observed' = observed.set(request, stock),
+    event' = { request: request, stage: "read", result: stock },
+  }
+
+  action commit(request) = {
+    val afterCommit = nextStock(observed.get(request), stock)
+    all {
+      phase.get(request) == "read",
+      stock' = if (afterCommit >= 0) afterCommit else stock,
+      phase' = phase.set(request, if (afterCommit >= 0) "accepted" else "rejected"),
+      observed' = observed,
+      event' = { request: request, stage: "commit", result: if (afterCommit >= 0) 201 else 409 },
+    }
+  }
+
+  action step = {
+    nondet request = requests.oneOf()
+    any { read(request), commit(request) }
+  }
+
+  val noOversell = requests.filter(request => phase.get(request) == "accepted").size() <= 1
+}

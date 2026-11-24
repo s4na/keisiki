@@ -8,5 +8,9 @@ module StockExample
     config.eager_load = false
     config.logger = Logger.new(File::NULL)
     config.secret_key_base = "stock-example-for-tests-only"
+
+    config.after_initialize do
+      config.x.reservations = ReservationStore.new(1)
+    end
   end
 end

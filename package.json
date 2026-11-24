@@ -1,0 +1,7 @@
+{
+  "name": "keisiki",
+  "private": true,
+  "devDependencies": {
+    "@informalsystems/quint": "0.33.1"
+  }
+}

@@ -1,4 +1,9 @@
 class StockController < ActionController::API
+  def reserve
+    accepted = Rails.configuration.x.reservations.reserve
+    head(accepted ? :created : :conflict)
+  end
+
   def remaining
     stock = nonnegative_integer(params[:stock])
     quantity = nonnegative_integer(params[:quantity])
