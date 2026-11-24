@@ -18,6 +18,10 @@ class IntegerExpression
     quint(@expression)
   end
 
+  def to_tla
+    tla(@expression)
+  end
+
   private
 
   def read_method
@@ -105,6 +109,19 @@ class IntegerExpression
       "(#{quint(left)} #{operator} #{quint(right)})"
     in [:if, condition, consequent, alternative]
       "(if (#{quint(condition)}) #{quint(consequent)} else #{quint(alternative)})"
+    end
+  end
+
+  def tla(term)
+    case term
+    in [:parameter, name]
+      name.to_s
+    in [:integer, value]
+      value.to_s
+    in [:- | :> => operator, left, right]
+      "(#{tla(left)} #{operator} #{tla(right)})"
+    in [:if, condition, consequent, alternative]
+      "(IF #{tla(condition)} THEN #{tla(consequent)} ELSE #{tla(alternative)})"
     end
   end
 end
