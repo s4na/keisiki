@@ -34,3 +34,7 @@ bundle exec ruby script/ruby_to_lean.rb examples/ruby/budget.rb examples/ruby/bu
 アプリケーション側は事前・事後条件と証明ファイルを用意します。互換性のある形は `examples/lean` にあります。変換と証明検査はソースから毎回やり直します。
 
 GitHub Actions は、同じソースからの出力の一致、CRuby との照合、引数を入れ替えた版と等号境界を変えた版の反例、未対応構文と証明のすり抜けの拒否を検証します。`ruby-lean-verification` に生成した Lean ソースと検証結果を保存します。
+
+## PostgreSQL の SQL 検証
+
+実際に Ruby が PostgreSQL に送る在庫更新 SQL から、Lean の命令を生成します。任意のモデル上の履歴に対する在庫保存の証明と、実際の PostgreSQL での競合・ロールバック・反例の再現を CI で実行します。[PostgreSQL の設計・検査範囲](docs/postgres.md)
