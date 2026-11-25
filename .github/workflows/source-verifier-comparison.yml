@@ -27,6 +27,8 @@ jobs:
         include:
           - method: source-generation
             revision: ba990fa9d431d913f6b1fbac57b9316f994d6465
+          - method: source-generation-repaired
+            revision: e2104124d0e0e0dad5a6e888b6698db614fa3ec9
           - method: independent-lean
             revision: 0c9a3251a5c8a9253c3c580556aff58f623b97c2
     steps:

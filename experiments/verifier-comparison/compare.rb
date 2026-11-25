@@ -12,7 +12,7 @@ end
 def outcome(exit_code, stdout, stderr)
   return "verified" if exit_code == 0
   return "rejected" if exit_code == 1
-  return "execution_error" unless exit_code == 2
+  return "harness_error" unless exit_code == 2
 
   # The generation CLI writes a JSON verdict. The comparison CLI writes a labeled diagnostic.
   if stderr.lines.any? { |line| line.start_with?("UNSUPPORTED ") }
@@ -68,7 +68,7 @@ report = {
   outcomes: outcomes
 }
 puts JSON.pretty_generate(report)
-if outcomes.first.fetch(:result) != "verified" || outcomes.any? { |entry| entry.fetch(:result) == "execution_error" }
+if outcomes.first.fetch(:result) != "verified" || outcomes.any? { |entry| entry.fetch(:result) == "harness_error" }
   warn "The comparison did not complete with a verified original and interpretable conclusions"
   exit 1
 end
