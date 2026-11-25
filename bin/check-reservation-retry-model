@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# != 1 ]]; then
+  printf '%s\n' "Usage: TLA2TOOLS_JAR=/path/to/tla2tools.jar $0 NEW_ARTIFACT_DIRECTORY" >&2
+  exit 2
+fi
+
+jar_file=$(cd "$(dirname "$TLA2TOOLS_JAR")" && pwd)/$(basename "$TLA2TOOLS_JAR")
+model_dir=$(cd "$(dirname "$0")/../model/tla/reservation_retry" && pwd)
+mkdir -p "$(dirname "$1")"
+mkdir "$1"
+artifacts=$(cd "$1" && pwd)
+model_run=$(mktemp -d)
+trap 'rm -rf "$model_run"' EXIT
+cp "$model_dir"/*.tla "$model_dir"/*.cfg "$model_run"
+cd "$model_run"
+
+start=$SECONDS
+normal_code=0
+java -cp "$jar_file" tlc2.TLC -workers 1 -config normal.cfg ReservationRetry.tla \
+  > "$artifacts/normal.log" 2>&1 || normal_code=$?
+if [[ "$normal_code" != 0 ]] ||
+  ! grep -qFx 'Model checking completed. No error has been found.' "$artifacts/normal.log" ||
+  ! grep -qFx '4 states generated, 4 distinct states found, 0 states left on queue.' "$artifacts/normal.log"; then
+  cat "$artifacts/normal.log" >&2
+  exit 1
+fi
+normal_elapsed=$((SECONDS - start))
+
+start=$SECONDS
+mutant_code=0
+java -cp "$jar_file" tlc2.TLC -workers 1 -config double_update.cfg \
+  -dumpTrace json counterexample.json ReservationRetry.tla \
+  > "$artifacts/double-update.log" 2>&1 || mutant_code=$?
+if [[ "$mutant_code" != 12 ]] ||
+  ! grep -qFx 'Error: Invariant P1 is violated.' "$artifacts/double-update.log" ||
+  [[ ! -s counterexample.json ]]; then
+  cat "$artifacts/double-update.log" >&2
+  exit 1
+fi
+mutant_elapsed=$((SECONDS - start))
+cp counterexample.json "$artifacts/"
+
+jq -e '
+  (.counterexample.action | map(.[1].name)) == ["Commit", "LoseResponse", "Retry"] and
+  (.counterexample.state | map(.[1]) |
+    map(.stock) == [2, 1, 1, 0] and
+    map(.reservations | length) == [0, 1, 1, 1] and
+    .[-1].firstResult == {"reservation_id": "reservation-1", "quantity": 1} and
+    .[-1].retryResult == .[-1].firstResult)
+' counterexample.json > /dev/null
+
+normal_states=$(awk '/ distinct states found, .* states left on queue\./ { print $4 }' "$artifacts/normal.log")
+jq --argjson normal_states "$normal_states" --argjson normal_elapsed "$normal_elapsed" \
+  --argjson mutant_elapsed "$mutant_elapsed" '
+  {
+    property: "P1",
+    assurance: "finite_model_check",
+    normal: {expected: "no_violation", observed: "no_violation",
+      states_checked: $normal_states, elapsed_seconds: $normal_elapsed},
+    double_update: {expected: "invariant_violation", observed: "invariant_violation",
+      transitions: (.counterexample.action | length),
+      final_stock: .counterexample.state[-1][1].stock, elapsed_seconds: $mutant_elapsed}
+  }
+' counterexample.json > "$artifacts/result.json"

@@ -1,0 +1,158 @@
+name: Reservation retry verification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  app-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+        env:
+          POSTGRES_PASSWORD: keisiki-ci
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.9"
+          bundler-cache: true
+      - name: Record both executions through Rails and PostgreSQL
+        env:
+          KEISIKI_POSTGRES_TEST_URL: postgresql://postgres:keisiki-ci@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+        run: |
+          bundle exec ruby test/retry_after_commit.rb baseline tmp/retry/baseline.json
+          bundle exec ruby test/retry_after_commit.rb double_update tmp/retry/double_update.json
+      - name: Check both histories against the same contract
+        run: |
+          bundle exec ruby test/retry_contract.rb tmp/retry/baseline.json > tmp/retry/baseline-result.json
+          code=0
+          bundle exec ruby test/retry_contract.rb tmp/retry/double_update.json > tmp/retry/double_update-result.json || code=$?
+          test "$code" = 1
+          jq -e '.status == "CONTRACT_VIOLATION" and .violations == ["retry_stock_unchanged"]' \
+            tmp/retry/double_update-result.json
+
+          {
+            printf '%s\n' '### Reservation retry after a lost response' '' \
+              '| Variant | Contract | Stock after first commit | Stock after retry |' '| --- | --- | ---: | ---: |'
+            for variant in baseline double_update; do
+              jq -r --arg variant "$variant" \
+                '"| \($variant) | \(.status) | \(.observed.stock_after_first_commit) | \(.observed.stock_after_retry) |"' \
+                "tmp/retry/$variant-result.json"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: reservation-retry-history
+          path: tmp/retry/
+          if-no-files-found: error
+  model-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install pinned TLC build
+        run: |
+          tla_jar="$RUNNER_TEMP/tla2tools.jar"
+          curl --fail --location --silent --show-error --retry 3 --max-time 60 \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar \
+            --output "$tla_jar"
+          printf '%s  %s\n' fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713 "$tla_jar" | sha256sum --check
+          printf 'TLA2TOOLS_JAR=%s\n' "$tla_jar" >> "$GITHUB_ENV"
+      - name: Check the finite model and its positive control
+        run: |
+          artifacts="$RUNNER_TEMP/reservation-retry-model"
+          bin/check-reservation-retry-model "$artifacts"
+          {
+            printf '%s\n' '### 再送の有限モデル検査' '' \
+              '在庫２個、予約 ID １種、数量１個、コミット後の応答喪失と再送１回。' '' \
+              '| 性質 | 方式 | 不具合 | 検出結果 | 確認範囲 | 実行時間 |' \
+              '| --- | --- | --- | --- | --- | ---: |'
+            jq -r '"| P1 | TLC | 正常対照 | 違反なし | 到達可能な \(.normal.states_checked) 状態 | \(.normal.elapsed_seconds) 秒 |",
+              "| P1 | TLC | 再送時の二重更新 | 検出 | 反例 \(.double_update.transitions) 遷移、残在庫 \(.double_update.final_stock) 個 | \(.double_update.elapsed_seconds) 秒 |"' "$artifacts/result.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: reservation-retry-model
+          path: ${{ runner.temp }}/reservation-retry-model
+          if-no-files-found: error
+
+  retry-conformance:
+    needs: [app-smoke, model-check]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.9"
+      - name: Install pinned Lean via Elan
+        run: |
+          installer="$RUNNER_TEMP/elan"
+          mkdir -p "$installer"
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/leanprover/elan/releases/download/v4.4.0/elan-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$installer/elan.tar.gz"
+          printf '%s  %s\n' 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2 "$installer/elan.tar.gz" | sha256sum --check
+          tar -xzf "$installer/elan.tar.gz" -C "$installer"
+          "$installer/elan-init" --default-toolchain none --no-modify-path -y
+          printf '%s\n' "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@v8
+        with:
+          name: reservation-retry-history
+          path: tmp/retry
+      - uses: actions/download-artifact@v8
+        with:
+          name: reservation-retry-model
+          path: tmp/retry-model
+      - name: Verify Lean theorems and compare the traces
+        run: |
+          mkdir -p tmp/conformance
+          lean -DwarningAsError=true --run model/lean/ReservationRetry.lean tmp/conformance/lean.json \
+            > tmp/conformance/axioms.log
+          cat tmp/conformance/axioms.log
+          grep -Fx "'ReservationRetry.normal_retry_is_idempotent' depends on axioms: [propext]" \
+            tmp/conformance/axioms.log
+          grep -Fx "'ReservationRetry.double_update_spends_twice' does not depend on any axioms" \
+            tmp/conformance/axioms.log
+
+          ruby test/retry_conformance.rb tmp/retry tmp/retry-model tmp/conformance/lean.json \
+            > tmp/conformance/result.json
+
+          {
+            printf '%s\n' '### 再送の証明・状態探索・実行照合' '' \
+              '| ケース | Rails／Lean の在庫履歴 | TLC |' '| --- | --- | --- |'
+            jq -r '"| 正常版 | \(.baseline.stocks | join(" → ")) | 到達可能な \(.baseline.tlc_reachable_states) 状態で違反なし |",
+              "| 二重更新 | \(.double_update.stocks | join(" → ")) | ３方式の反例が一致 |"' tmp/conformance/result.json
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: reservation-retry-conformance
+          path: tmp/conformance/
+          if-no-files-found: error
