@@ -1,0 +1,33 @@
+{
+  "status": "MATCH",
+  "violations": [],
+  "expected": {
+    "initial_stock": 2,
+    "stock_after_reservation": 1,
+    "reservations": [
+      {
+        "id": "reservation-1",
+        "stock_id": 1,
+        "quantity": 1
+      }
+    ],
+    "receipt": {
+      "status": 201,
+      "body": {
+        "reservation_id": "reservation-1",
+        "quantity": 1
+      }
+    }
+  },
+  "observed": {
+    "stock_after_first_commit": 1,
+    "stock_after_retry": 1,
+    "reservations_after_retry": [
+      {
+        "id": "reservation-1",
+        "quantity": 1,
+        "stock_id": 1
+      }
+    ]
+  }
+}
