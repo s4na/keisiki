@@ -1,0 +1,46 @@
+name: Baseline property test inputs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-pbt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.9"
+      - name: Generate and verify reservation retry plans
+        run: |
+          mkdir -p tmp/baseline-pbt
+          start=$SECONDS
+          bin/baseline-retry-plans 20261125 64 > tmp/baseline-pbt/plans.json
+          bin/baseline-retry-plans 20261125 64 > tmp/baseline-pbt/replay.json
+          cmp tmp/baseline-pbt/plans.json tmp/baseline-pbt/replay.json
+          bin/baseline-retry-plans 20261126 64 > tmp/baseline-pbt/changed-seed.json
+          ruby test/baseline_retry_plans.rb 20261125 64 \
+            tmp/baseline-pbt/plans.json tmp/baseline-pbt/changed-seed.json > tmp/baseline-pbt/input-check.json
+          jq --argjson elapsed "$((SECONDS - start))" '. + {elapsed_seconds: $elapsed}' \
+            tmp/baseline-pbt/input-check.json > tmp/baseline-pbt/summary.json
+          {
+            printf '%s\n' '### 再送の状態遷移入力' '' \
+              '| 性質 | 方式 | 不具合 | 検出結果 | 確認範囲 | 実行時間 |' \
+              '| --- | --- | --- | --- | --- | ---: |'
+            jq -r '"| P1 | 基準方式の入力生成 | 再送時の二重更新 | 対象外 | シード \(.seed) の \(.trial_count) 件を再生成（初回の応答喪失指定 \(.initial_response_loss_requested) 件） | \(.elapsed_seconds) 秒 |"' \
+              tmp/baseline-pbt/summary.json
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: baseline-retry-plans
+          path: tmp/baseline-pbt/
+          if-no-files-found: error
