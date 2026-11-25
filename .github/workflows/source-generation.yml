@@ -1,0 +1,38 @@
+name: ReserveStock source generation
+
+on:
+  pull_request:
+    paths:
+      - 'bin/check-reserve-stock'
+      - 'experiments/source-generation/**'
+      - '.github/workflows/source-generation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0.9'
+      - name: Install Lean 4.36.0
+        run: |
+          cd "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output lean.tar.zst \
+            https://github.com/leanprover/lean4/releases/download/v4.36.0/lean-4.36.0-linux.tar.zst
+          echo "2b7ab1ed8b92d2e6abfaf41344823b510064dbc9c0260cac73eb496ab2dea6eb  lean.tar.zst" | sha256sum --check
+          tar --extract --zstd --file lean.tar.zst
+          echo "$RUNNER_TEMP/lean-4.36.0-linux/bin" >> "$GITHUB_PATH"
+      - name: Check proof, counterexample, exclusions, and reproducibility
+        run: bash experiments/source-generation/ci.sh
+      - name: Upload generated Lean and check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reserve-stock-source-generation
+          path: ${{ runner.temp }}/reserve-stock-evidence/
