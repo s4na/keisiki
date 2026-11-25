@@ -49,8 +49,10 @@ jobs:
           path: evidence
       - name: Aggregate the results
         run: |
+          shopt -s nullglob
+          inputs=(evidence/*.json evidence/*/*.json)
           code=0
-          ruby reporting/summary.rb evidence/*/*.json > assurance-summary.md || code=$?
+          ruby reporting/summary.rb "${inputs[@]}" > assurance-summary.md || code=$?
           cat assurance-summary.md >> "$GITHUB_STEP_SUMMARY"
           exit "$code"
       - uses: actions/upload-artifact@v7
@@ -59,5 +61,5 @@ jobs:
           name: assurance-report
           path: |
             assurance-summary.md
-            evidence/*/*.json
+            evidence/**/*.json
           if-no-files-found: error

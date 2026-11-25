@@ -4,7 +4,7 @@
 
 ## 入力形式
 
-各ジョブは成果物 `assurance-results-<方式>` に JSON を置きます。`report` は成果物ごとのディレクトリから JSON を読み込みます。JSON の最上位には形式番号 `version`（現在は 1）、根拠にたどれる `source`、１件以上の `rows` を置きます。
+各ジョブは成果物 `assurance-results-<方式>` に JSON を置きます。`report` はダウンロード先のルートと配下のディレクトリから JSON を読み込みます。JSON の最上位には形式番号 `version`（現在は 1）、根拠にたどれる `source`、１件以上の `rows` を置きます。
 
 | フィールド | 記録する内容 |
 | --- | --- |
