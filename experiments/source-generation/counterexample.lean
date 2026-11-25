@@ -1,10 +1,10 @@
 
-def samples : List (Int × Int × Option Int) := do
+def samples : List (Int × Int × Option Int) :=
   let values : List Int := [-3, -2, -1, 0, 1, 2, 3, 4]
-  let stock ← values
-  let requested ← values
-  let previous ← [none, some requested, some (requested + 1)]
-  pure (stock, requested, previous)
+  values.flatMap fun stock =>
+    values.flatMap fun requested =>
+      [none, some requested, some (requested + 1)].map fun previous =>
+        (stock, requested, previous)
 
 def mismatch : Option (Int × Int × Option Int) :=
   samples.find? (fun (stock, requested, previous) =>
