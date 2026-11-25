@@ -1,0 +1,71 @@
+name: Independent Lean reservation check
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/independent-lean.yml'
+      - 'bin/check-reserve-stock'
+      - 'experiments/independent-lean/**'
+
+permissions:
+  contents: read
+
+jobs:
+  correspondence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0.9'
+      - name: Install Lean 4.36.0
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/lean-4.36.0-linux.tar.zst"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/leanprover/lean4/releases/download/v4.36.0/lean-4.36.0-linux.tar.zst \
+            --output "$archive"
+          printf '%s  %s\n' '2b7ab1ed8b92d2e6abfaf41344823b510064dbc9c0260cac73eb496ab2dea6eb' "$archive" |
+            sha256sum --check
+          tar --zstd -xf "$archive" -C "$RUNNER_TEMP"
+          printf '%s\n' "$RUNNER_TEMP/lean-4.36.0-linux/bin" >> "$GITHUB_PATH"
+      - name: Check the pinned Ruby service and controls
+        shell: bash
+        run: |
+          fixture=experiments/independent-lean/fixtures/reserve_stock.rb
+          test "$(git hash-object "$fixture")" = '8e2d5eb7f546e9d5698dcf0ae306203334b40422'
+
+          cases_dir="$(mktemp -d)"
+          sed 's/^    reservation\.nil?$/    !reservation/' "$fixture" > "$cases_dir/equivalent.rb"
+          sed 's/stock\.quantity - quantity/stock.quantity + quantity/' "$fixture" > "$cases_dir/add.rb"
+          sed 's/stock\.quantity < quantity/stock.quantity <= quantity/' "$fixture" > "$cases_dir/threshold.rb"
+          sed 's/reservation\.quantity != quantity/reservation.quantity == quantity/' "$fixture" > "$cases_dir/conflict.rb"
+          sed 's/^    reservation\.nil?$/    true/' "$fixture" > "$cases_dir/always.rb"
+          sed 's/find_by(id: reservation_id)/find_by(id: stock.id)/' "$fixture" > "$cases_dir/binding.rb"
+          sed '/^      reservation || /i\      stock.update!(quantity: stock.quantity)' "$fixture" > "$cases_dir/extra-write.rb"
+          if cmp -s "$fixture" "$cases_dir/equivalent.rb"; then
+            printf '%s\n' 'Equivalent guard control was not changed' >&2
+            exit 1
+          fi
+
+          check() {
+            local label="$1" expected="$2" pattern="$3" input="$4" status=0 output
+            output="$(bin/check-reserve-stock "$input" 2>&1)" || status=$?
+            printf '%s [%s] %s\n' "$label" "$status" "$output"
+            [[ "$status" = "$expected" && "$output" == "$pattern"* ]]
+            printf '| %s | %s | %s |\n' "$label" "$status" "$output" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          printf '### Reservation checker\n\n| Input | Exit code | Result |\n| --- | --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+          check 'Pinned service' 0 'VERIFIED different missing less subtract' "$fixture"
+          check 'Equivalent nil guard' 0 'VERIFIED different missing less subtract' "$cases_dir/equivalent.rb"
+          check 'Add stock' 1 'MISMATCH different missing less add' "$cases_dir/add.rb"
+          check 'Reject exact stock' 1 'MISMATCH different missing less-or-equal subtract' "$cases_dir/threshold.rb"
+          check 'Reverse quantity conflict' 1 'MISMATCH same missing less subtract' "$cases_dir/conflict.rb"
+          check 'Debit unconditionally' 1 'MISMATCH different always less subtract' "$cases_dir/always.rb"
+          check 'Read by a different ID' 2 'UNSUPPORTED ' "$cases_dir/binding.rb"
+          check 'Add a write outside the guard' 2 'UNSUPPORTED ' "$cases_dir/extra-write.rb"
+          check 'Missing source file' 2 'ERROR ' "$cases_dir/missing.rb"
