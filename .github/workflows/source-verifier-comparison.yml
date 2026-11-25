@@ -1,0 +1,76 @@
+name: Reservation source verifier comparison
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/source-verifier-comparison.yml
+      - experiments/verifier-comparison/**
+      - lean-toolchain
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/source-verifier-comparison.yml
+      - experiments/verifier-comparison/**
+      - lean-toolchain
+
+permissions:
+  contents: read
+
+jobs:
+  held-out:
+    name: Held-out checks (${{ matrix.method }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - method: source-generation
+            revision: ba990fa9d431d913f6b1fbac57b9316f994d6465
+          - method: source-generation-repaired
+            revision: e2104124d0e0e0dad5a6e888b6698db614fa3ec9
+          - method: independent-lean
+            revision: 0c9a3251a5c8a9253c3c580556aff58f623b97c2
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.revision }}
+          path: candidate
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.9"
+      - name: Install pinned Lean via Elan
+        run: |
+          installer="$RUNNER_TEMP/elan"
+          mkdir -p "$installer"
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/leanprover/elan/releases/download/v4.4.0/elan-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$installer/elan.tar.gz"
+          printf '%s  %s\n' 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2 "$installer/elan.tar.gz" | sha256sum --check
+          tar -xzf "$installer/elan.tar.gz" -C "$installer"
+          "$installer/elan-init" --default-toolchain "$(cat lean-toolchain)" --no-modify-path -y
+          printf '%s\n' "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Exercise the frozen candidate and retain its result
+        run: |
+          lean --version
+          ruby --version
+          out="$RUNNER_TEMP/source-verifier-comparison"
+          mkdir -p "$out"
+          code=0
+          ruby experiments/verifier-comparison/compare.rb candidate "$out" > "$out/result.json" || code=$?
+          {
+            printf '%s\n' '### 対応検査の比較' '' \
+              '| 入力 | 実装上の分類 | 判定 | 終了コード | 時間 (ms) |' '| --- | --- | --- | ---: | ---: |'
+            jq -r '.outcomes[] | "| \(.case) | \(.oracle) | \(.result) | \(.exit_code) | \(.elapsed_ms) |"' "$out/result.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: source-verifier-comparison-${{ matrix.method }}
+          path: ${{ runner.temp }}/source-verifier-comparison/
+          if-no-files-found: error
