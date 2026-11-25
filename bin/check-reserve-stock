@@ -1,0 +1,123 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+module ReserveStockCheck
+  class Unsupported < StandardError; end
+
+  MAX_SOURCE_BYTES = 16_384
+  PROOF_DIR = File.expand_path("../experiments/independent-lean", __dir__)
+
+  # The shell fixes everything except the four expressions represented in Lean.
+  # In particular, the debit must occur only in the guarded transaction path.
+  SHAPE = <<~'RUBY'
+    class ReserveStock
+      class Conflict < StandardError; end
+
+      def call(reservation_id:, quantity:)
+        Stock.transaction do
+          stock = Stock.lock.find(1)
+          reservation = Reservation.find_by(id: reservation_id)
+          raise Conflict if reservation && reservation.quantity %{existing} quantity
+
+          if debit_stock?(reservation)
+            raise Conflict if stock.quantity %{stock} quantity
+
+            stock.update!(quantity: stock.quantity %{adjustment} quantity)
+          end
+          reservation || Reservation.create!(id: reservation_id, stock_id: stock.id, quantity: quantity)
+        end
+      end
+
+      private
+
+      def debit_stock?(reservation)
+        %{debit}
+      end
+    end
+  RUBY
+
+  EXISTING_TESTS = [["different", "!="], ["same", "=="]].freeze
+  DEBIT_TESTS = [
+    ["missing", "reservation.nil?"],
+    ["missing", "reservation.nil?()"],
+    ["missing", "!reservation"],
+    ["present", "!reservation.nil?"],
+    ["always", "true"],
+    ["never", "false"]
+  ].freeze
+  STOCK_TESTS = [["less", "<"], ["less-or-equal", "<="]].freeze
+  ADJUSTMENTS = [["subtract", "-"], ["add", "+"]].freeze
+
+  def self.read_ast(path)
+    raise "source must be a readable regular file" unless File.file?(path)
+
+    source = File.binread(path, MAX_SOURCE_BYTES + 1)
+    raise Unsupported, "source exceeds #{MAX_SOURCE_BYTES} bytes" if source.bytesize > MAX_SOURCE_BYTES
+    raise Unsupported, "source contains characters outside the ASCII subset" unless source.match?(/\A[\t\r\n\x20-\x7E]*\z/)
+
+    parsed = Prism.parse(source)
+    if parsed.failure?
+      raise Unsupported, "Ruby syntax error: #{parsed.errors.first.message}"
+    end
+    if parsed.data_loc || !parsed.magic_comments.empty?
+      raise Unsupported, "Ruby source directives and __END__ are outside the grammar"
+    end
+    parsed.value
+  end
+
+  def self.translate(ast)
+    matches = EXISTING_TESTS.product(DEBIT_TESTS, STOCK_TESTS, ADJUSTMENTS).filter_map do |existing, debit, stock, adjustment|
+      template = SHAPE % {
+        existing: existing.last, debit: debit.last, stock: stock.last, adjustment: adjustment.last
+      }
+      parsed = Prism.parse(template)
+      raise "invalid grammar template: #{parsed.errors.first.message}" if parsed.failure?
+
+      # Prism compares the complete tree, including flags and child order, ignoring offsets.
+      [existing.first, debit.first, stock.first, adjustment.first] if parsed.value === ast
+    end.uniq
+    raise Unsupported, "AST falls outside the supported ReserveStock grammar" if matches.empty?
+    raise "grammar mapped one Ruby AST to multiple programs" unless matches.one?
+
+    matches.first
+  end
+
+  def self.check_lean(program)
+    version, error, status = Open3.capture3("lean", "--version", chdir: PROOF_DIR)
+    unless status.success? && error.empty? && version.start_with?("Lean (version 4.36.0,")
+      raise "expected Lean 4.36.0: #{version}#{error}".strip
+    end
+
+    output, error, status = Open3.capture3("lean", "--run", "Reservation.lean", *program, chdir: PROOF_DIR)
+    case [status.exitstatus, output, error]
+    when [0, "VERIFIED\n", ""]
+      puts "VERIFIED #{program.join(' ')}"
+      0
+    when [10, "MISMATCH\n", ""]
+      puts "MISMATCH #{program.join(' ')}"
+      1
+    else
+      raise "Lean verification failed (#{status}): #{output}#{error}".strip
+    end
+  end
+
+  def self.run(args)
+    raise "usage: bin/check-reserve-stock PATH_TO_RUBY_SOURCE" unless args.length == 1
+    raise "expected Ruby 4.0.9, got #{RUBY_VERSION}" unless RUBY_VERSION == "4.0.9"
+
+    require "open3"
+    require "prism"
+
+    check_lean(translate(read_ast(args.first)))
+  end
+end
+
+begin
+  exit ReserveStockCheck.run(ARGV)
+rescue ReserveStockCheck::Unsupported => error
+  warn "UNSUPPORTED #{error.message}"
+  exit 2
+rescue LoadError, StandardError, SystemStackError => error
+  warn "ERROR #{error.message}"
+  exit 2
+end
