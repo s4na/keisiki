@@ -45,6 +45,7 @@ class RetryRun
 
     observe_db("before")
     request("initial")
+    observe_db("after_loss")
     request("retry")
     { variant: @variant, postgres_version: @observer.server_version, events: @events }
   ensure
@@ -94,9 +95,11 @@ class RetryRun
 
     binds = payload.fetch(:type_casted_binds, nil)
     binds = binds.call if binds.respond_to?(:call)
-    record("sql", attempt, statement: sql, binds: binds || [], affected_rows: payload[:affected_rows])
+    backend_pid = payload.fetch(:connection).raw_connection.backend_pid
+    record("sql", attempt, statement: sql, binds: binds || [], affected_rows: payload[:affected_rows],
+      backend_pid: backend_pid, succeeded: !payload[:exception])
     if sql == "COMMIT" && !payload[:exception]
-      record("db_commit", attempt, backend_pid: payload.fetch(:connection).raw_connection.backend_pid)
+      record("db_commit", attempt, backend_pid: backend_pid)
     end
   end
 
