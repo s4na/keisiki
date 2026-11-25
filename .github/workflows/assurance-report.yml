@@ -47,11 +47,10 @@ jobs:
         with:
           pattern: assurance-results-*
           path: evidence
-          merge-multiple: true
       - name: Aggregate the results
         run: |
           code=0
-          ruby reporting/summary.rb evidence/*.json > assurance-summary.md || code=$?
+          ruby reporting/summary.rb evidence/*/*.json > assurance-summary.md || code=$?
           cat assurance-summary.md >> "$GITHUB_STEP_SUMMARY"
           exit "$code"
       - uses: actions/upload-artifact@v7
@@ -60,5 +59,5 @@ jobs:
           name: assurance-report
           path: |
             assurance-summary.md
-            evidence/*.json
+            evidence/*/*.json
           if-no-files-found: error
