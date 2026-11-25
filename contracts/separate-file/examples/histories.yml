@@ -1,0 +1,58 @@
+# Each observation is written as a complete example, independent of the contract.
+same_id_retry:
+  given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1], [A, 1]], execution: retry }
+  cases:
+    - name: retry_returns_original_reservation
+      observations: { stock: 1, reservations: [[A, 1]], receipts: [[201, A, 1], [201, A, 1]] }
+      expected: []
+    - name: retry_debits_stock_again
+      observations: { stock: 0, reservations: [[A, 1]], receipts: [[201, A, 1], [201, A, 1]] }
+      expected: [stock_once]
+same_id_parallel:
+  given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1], [A, 1]], execution: parallel }
+  cases:
+    - name: both_requests_get_the_same_reservation
+      observations: { stock: 1, reservations: [[A, 1]], receipts: [[201, A, 1], [201, A, 1]] }
+      expected: []
+    - name: both_requests_create_a_reservation
+      observations: { stock: 0, reservations: [[A, 1], [A, 1]], receipts: [[201, A, 1], [201, A, 1]] }
+      expected: [stock_once, one_reservation]
+rollback:
+  given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1]], execution: failure_between_writes }
+  cases:
+    - name: neither_write_survives
+      observations: { stock: 2, reservations: [] }
+      expected: []
+    - name: reservation_survives_failure
+      observations: { stock: 2, reservations: [[A, 1]] }
+      expected: [no_partial_reservation]
+retry_after_lost_response:
+  given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1], [A, 1]], execution: response_lost_after_commit }
+  cases:
+    - name: retry_returns_committed_result
+      observations: { stock_at_first_commit: 1, reservations_at_first_commit: [[A, 1]], stock: 1, reservations: [[A, 1]], receipts: [[201, A, 1]] }
+      expected: []
+    - name: retry_returns_another_id
+      observations: { stock_at_first_commit: 1, reservations_at_first_commit: [[A, 1]], stock: 1, reservations: [[A, 1]], receipts: [[201, B, 1]] }
+      expected: [committed_receipt]
+    - name: retry_debits_stock_after_lost_response
+      observations: { stock_at_first_commit: 1, reservations_at_first_commit: [[A, 1]], stock: 0, reservations: [[A, 1]], receipts: [[201, A, 1]] }
+      expected: [stock_unchanged]
+distinct_ids_parallel:
+  given: { initial_stock: 1, initial_reservations: [], requests: [[A, 1], [B, 1]], execution: parallel }
+  cases:
+    - name: one_reservation_commits
+      observations: { stock: 0, reservations: [[B, 1]] }
+      expected: []
+    - name: both_reservations_commit
+      observations: { stock: -1, reservations: [[A, 1], [B, 1]] }
+      expected: [nonnegative_stock, at_most_one_reservation]
+uncontended_first_request:
+  given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1]], execution: uncontended }
+  cases:
+    - name: first_request_succeeds
+      observations: { stock: 1, reservations: [[A, 1]], receipts: [[201, A, 1]] }
+      expected: []
+    - name: implementation_rejects_every_request
+      observations: { stock: 2, reservations: [], receipts: [[409]] }
+      expected: [success_receipt, requested_reservation, stock_debited]

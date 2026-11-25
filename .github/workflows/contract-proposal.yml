@@ -1,0 +1,48 @@
+name: Separate reservation contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contract-proposal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.9"
+      - name: Compile P1 through P4 and check independent observations
+        run: |
+          mkdir -p tmp/contract-proposal
+          ruby contracts/separate-file/check.rb compile contracts/separate-file/reservation.yml \
+            > tmp/contract-proposal/engine-input.json
+
+          result=0
+          ruby contracts/separate-file/check.rb verify tmp/contract-proposal/engine-input.json \
+            contracts/separate-file/examples/histories.yml > tmp/contract-proposal/results.json || result=$?
+
+          if jq -e '.results | type == "array" and length > 0' tmp/contract-proposal/results.json > /dev/null; then
+            elapsed=$(jq -r '(.elapsed_milliseconds * 1000 | round) / 1000' tmp/contract-proposal/results.json)
+            {
+              printf '%s\n' '### 在庫確保の別ファイル契約' '' \
+                "方式は YAML から変換した JSON による観測値の照合。独立に記述した例を ${elapsed} ms で判定。" '' \
+                '| 性質 | 観測例 | 期待する違反 | 実測した違反 | 判定一致 |' '| --- | --- | --- | --- | --- |'
+              jq -r '.results[] | "| \(.property) | \(.example) | \(.expected_violations | join(", ")) | \(.observed_violations | join(", ")) | \(.verified) |"' \
+                tmp/contract-proposal/results.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$result"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: reservation-contract-proposal
+          path: tmp/contract-proposal/
+          if-no-files-found: error

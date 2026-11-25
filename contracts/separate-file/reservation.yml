@@ -1,0 +1,48 @@
+version: 1
+operation:
+  method: POST
+  path: /stock/reservations
+  fields: [reservation_id, quantity]
+cases:
+  same_id_retry:
+    property: P1
+    given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1], [A, 1]], execution: retry }
+    checks:
+      stock_once: [stock, eq, 1]
+      one_reservation: [reservations, eq, [[A, 1]]]
+      same_receipts: [receipts, eq, [[201, A, 1], [201, A, 1]]]
+  same_id_parallel:
+    property: P1
+    given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1], [A, 1]], execution: parallel }
+    checks:
+      stock_once: [stock, eq, 1]
+      one_reservation: [reservations, eq, [[A, 1]]]
+      same_receipts: [receipts, eq, [[201, A, 1], [201, A, 1]]]
+  rollback:
+    property: P2
+    given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1]], execution: failure_between_writes }
+    checks:
+      stock_restored: [stock, eq, 2]
+      no_partial_reservation: [reservations, eq, []]
+  retry_after_lost_response:
+    property: P2
+    given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1], [A, 1]], execution: response_lost_after_commit }
+    checks:
+      first_commit_stock: [stock_at_first_commit, eq, 1]
+      first_commit_reservation: [reservations_at_first_commit, eq, [[A, 1]]]
+      stock_unchanged: [stock, eq, 1]
+      reservation_unchanged: [reservations, eq, [[A, 1]]]
+      committed_receipt: [receipts, eq, [[201, A, 1]]]
+  distinct_ids_parallel:
+    property: P3
+    given: { initial_stock: 1, initial_reservations: [], requests: [[A, 1], [B, 1]], execution: parallel }
+    checks:
+      nonnegative_stock: [stock, gte, 0]
+      at_most_one_reservation: [reservations, count_lte, 1]
+  uncontended_first_request:
+    property: P4
+    given: { initial_stock: 2, initial_reservations: [], requests: [[A, 1]], execution: uncontended }
+    checks:
+      success_receipt: [receipts, eq, [[201, A, 1]]]
+      requested_reservation: [reservations, eq, [[A, 1]]]
+      stock_debited: [stock, eq, 1]
