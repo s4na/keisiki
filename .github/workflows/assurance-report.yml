@@ -1,0 +1,64 @@
+name: Assurance reporting
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  retry-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.9"
+      - name: Convert the recorded retry results
+        run: |
+          mkdir -p evidence
+          ruby reporting/import_retry.rb \
+            https://github.com/s4na/keisiki/actions/runs/45400133924/job/138466228020 \
+            reporting/retry-example/baseline-result.json \
+            reporting/retry-example/double_update-result.json > evidence/retry-history.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: assurance-results-retry
+          path: evidence/*.json
+          if-no-files-found: error
+
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: retry-evidence
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.9"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: assurance-results-*
+          path: evidence
+          merge-multiple: true
+      - name: Aggregate the results
+        run: |
+          code=0
+          ruby reporting/summary.rb evidence/*.json > assurance-summary.md || code=$?
+          cat assurance-summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: assurance-report
+          path: |
+            assurance-summary.md
+            evidence/*.json
+          if-no-files-found: error
