@@ -52,7 +52,7 @@ jobs:
             --output "$installer/elan.tar.gz"
           printf '%s  %s\n' 0e8250aa2be86c7af929ade68db617af9edc8b9ccf6eaf5ece228250d0d032e2 "$installer/elan.tar.gz" | sha256sum --check
           tar -xzf "$installer/elan.tar.gz" -C "$installer"
-          "$installer/elan-init" --default-toolchain none --no-modify-path -y
+          "$installer/elan-init" --default-toolchain "$(cat lean-toolchain)" --no-modify-path -y
           printf '%s\n' "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Exercise the frozen candidate and retain its result
         run: |
